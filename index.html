@@ -1,0 +1,770 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PDF OCR → Word Document</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f0f2f5;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.10);
+      padding: 40px;
+      width: 100%;
+      max-width: 560px;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: #1a1a2e;
+      margin-bottom: 6px;
+    }
+
+    .subtitle {
+      color: #6b7280;
+      font-size: 0.9rem;
+      margin-bottom: 28px;
+    }
+
+    /* Drop zone */
+    #drop-zone {
+      border: 2px dashed #c7d2fe;
+      border-radius: 10px;
+      padding: 40px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      background: #f8f9ff;
+      margin-bottom: 24px;
+    }
+
+    #drop-zone.drag-over {
+      border-color: #6366f1;
+      background: #eef2ff;
+    }
+
+    #drop-zone.has-file {
+      border-color: #22c55e;
+      background: #f0fdf4;
+    }
+
+    .drop-icon {
+      font-size: 2.5rem;
+      margin-bottom: 10px;
+    }
+
+    .drop-label {
+      color: #374151;
+      font-size: 0.95rem;
+      margin-bottom: 4px;
+    }
+
+    .drop-hint {
+      color: #9ca3af;
+      font-size: 0.82rem;
+    }
+
+    #file-name {
+      margin-top: 10px;
+      font-size: 0.85rem;
+      color: #22c55e;
+      font-weight: 600;
+      word-break: break-all;
+    }
+
+    #file-input { display: none; }
+
+    /* Language selector */
+    .section-label {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #374151;
+      margin-bottom: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .lang-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 24px;
+    }
+
+    .lang-option {
+      display: none;
+    }
+
+    .lang-label {
+      display: inline-block;
+      padding: 7px 16px;
+      border: 2px solid #e5e7eb;
+      border-radius: 20px;
+      font-size: 0.88rem;
+      color: #374151;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s, color 0.15s;
+      user-select: none;
+    }
+
+    .lang-option:checked + .lang-label {
+      border-color: #6366f1;
+      background: #6366f1;
+      color: #fff;
+    }
+
+    /* Buttons */
+    .btn {
+      display: inline-block;
+      padding: 11px 28px;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      transition: opacity 0.15s, transform 0.1s;
+    }
+
+    .btn:active { transform: scale(0.98); }
+
+    .btn-primary {
+      background: #6366f1;
+      color: #fff;
+      width: 100%;
+    }
+
+    .btn-primary:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    .btn-success {
+      background: #22c55e;
+      color: #fff;
+      width: 100%;
+      margin-top: 12px;
+    }
+
+    /* Progress */
+    #progress-section {
+      margin-top: 20px;
+      display: none;
+    }
+
+    .progress-bar-wrap {
+      background: #e5e7eb;
+      border-radius: 999px;
+      height: 10px;
+      overflow: hidden;
+      margin-bottom: 8px;
+    }
+
+    #progress-bar {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #6366f1, #818cf8);
+      border-radius: 999px;
+      transition: width 0.3s ease;
+    }
+
+    #status-text {
+      font-size: 0.85rem;
+      color: #6b7280;
+      min-height: 20px;
+    }
+
+    /* API Key */
+    .api-key-wrap {
+      display: flex;
+      align-items: center;
+      border: 1.5px solid #e5e7eb;
+      border-radius: 8px;
+      overflow: hidden;
+      margin-bottom: 6px;
+      background: #fff;
+      transition: border-color 0.15s;
+    }
+
+    .api-key-wrap:focus-within {
+      border-color: #6366f1;
+    }
+
+    .api-key-icon {
+      padding: 0 10px;
+      font-size: 1rem;
+      color: #9ca3af;
+      user-select: none;
+    }
+
+    #api-key-input {
+      flex: 1;
+      border: none;
+      outline: none;
+      padding: 10px 4px;
+      font-size: 0.9rem;
+      font-family: inherit;
+      background: transparent;
+      color: #1a1a2e;
+    }
+
+    #api-key-input::placeholder { color: #9ca3af; }
+
+    #toggle-key-btn {
+      background: none;
+      border: none;
+      padding: 0 12px;
+      cursor: pointer;
+      font-size: 1rem;
+      color: #6b7280;
+      line-height: 1;
+    }
+
+    .api-key-hint {
+      font-size: 0.78rem;
+      color: #9ca3af;
+      margin-bottom: 20px;
+      line-height: 1.5;
+    }
+
+    /* Error */
+    #error-box {
+      display: none;
+      margin-top: 16px;
+      background: #fef2f2;
+      border: 1px solid #fca5a5;
+      border-radius: 8px;
+      padding: 12px 16px;
+      color: #b91c1c;
+      font-size: 0.88rem;
+    }
+
+    /* Download */
+    #download-section {
+      display: none;
+      margin-top: 16px;
+    }
+
+    .success-msg {
+      font-size: 0.88rem;
+      color: #15803d;
+      text-align: center;
+      margin-bottom: 8px;
+    }
+
+    .btn-restart {
+      background: none;
+      color: #6b7280;
+      border: 1.5px solid #e5e7eb;
+      width: 100%;
+      margin-top: 8px;
+      font-size: 0.88rem;
+    }
+
+    .btn-restart:hover { border-color: #9ca3af; color: #374151; }
+  </style>
+</head>
+<body>
+
+<div class="card">
+  <h1>PDF OCR → Word Document</h1>
+  <p class="subtitle">Extract text from scanned PDFs and download as .docx</p>
+
+  <!-- Drop Zone -->
+  <div id="drop-zone">
+    <div class="drop-icon">📄</div>
+    <div class="drop-label">Drag &amp; drop a PDF here</div>
+    <div class="drop-hint">or click to browse</div>
+    <div id="file-name"></div>
+  </div>
+  <input type="file" id="file-input" accept=".pdf,application/pdf">
+
+  <!-- Language -->
+  <div class="section-label">Language</div>
+  <div class="lang-grid">
+    <input type="radio" name="lang" id="lang-lat" class="lang-option" value="lat" checked>
+    <label for="lang-lat" class="lang-label">Latin</label>
+
+    <input type="radio" name="lang" id="lang-grc" class="lang-option" value="grc">
+    <label for="lang-grc" class="lang-label">Ancient Greek</label>
+
+    <input type="radio" name="lang" id="lang-deu" class="lang-option" value="deu">
+    <label for="lang-deu" class="lang-label">German</label>
+
+    <input type="radio" name="lang" id="lang-fra" class="lang-option" value="fra">
+    <label for="lang-fra" class="lang-label">French</label>
+
+    <input type="radio" name="lang" id="lang-ita" class="lang-option" value="ita">
+    <label for="lang-ita" class="lang-label">Italian</label>
+  </div>
+
+  <!-- API Key -->
+  <div class="section-label">API Key</div>
+  <div class="api-key-wrap">
+    <span class="api-key-icon">🔑</span>
+    <input type="password" id="api-key-input" placeholder="sk-ant-…" autocomplete="off">
+    <button id="toggle-key-btn" type="button" title="Show/hide key">👁</button>
+  </div>
+  <p class="api-key-hint">Your key stays in the browser and is only sent to api.anthropic.com.<br>
+    If you open this file via <code>file://</code> and see CORS errors, serve it locally:<br>
+    <code>python3 -m http.server 8080</code> → open <code>http://localhost:8080</code></p>
+
+  <!-- Start button -->
+  <button id="start-btn" class="btn btn-primary" disabled>Start OCR</button>
+
+  <!-- Progress -->
+  <div id="progress-section">
+    <div class="progress-bar-wrap">
+      <div id="progress-bar"></div>
+    </div>
+    <div id="status-text">Initializing…</div>
+  </div>
+
+  <!-- Error -->
+  <div id="error-box"></div>
+
+  <!-- Download -->
+  <div id="download-section">
+    <div class="success-msg">✓ OCR complete!</div>
+    <button id="download-btn" class="btn btn-success">Download .docx</button>
+    <button id="restart-btn" class="btn btn-restart">Start over</button>
+  </div>
+</div>
+
+<!-- PDF.js -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<!-- Tesseract.js v5 -->
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<!-- JSZip -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+<script>
+(function () {
+  'use strict';
+
+  // ── PDF.js worker ──────────────────────────────────────────────────────────
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+  // ── State ──────────────────────────────────────────────────────────────────
+  let selectedFile = null;
+  let docxBlob = null;
+
+  // ── DOM refs ───────────────────────────────────────────────────────────────
+  const dropZone      = document.getElementById('drop-zone');
+  const fileInput     = document.getElementById('file-input');
+  const fileNameEl    = document.getElementById('file-name');
+  const startBtn      = document.getElementById('start-btn');
+  const progressSec   = document.getElementById('progress-section');
+  const progressBar   = document.getElementById('progress-bar');
+  const statusText    = document.getElementById('status-text');
+  const errorBox      = document.getElementById('error-box');
+  const downloadSec   = document.getElementById('download-section');
+  const downloadBtn   = document.getElementById('download-btn');
+  const restartBtn    = document.getElementById('restart-btn');
+  const apiKeyInput   = document.getElementById('api-key-input');
+  const toggleKeyBtn  = document.getElementById('toggle-key-btn');
+
+  // ── File selection ─────────────────────────────────────────────────────────
+  dropZone.addEventListener('click', () => fileInput.click());
+
+  dropZone.addEventListener('dragover', e => {
+    e.preventDefault();
+    dropZone.classList.add('drag-over');
+  });
+
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (file && file.type === 'application/pdf') {
+      setFile(file);
+    } else {
+      showError('Please drop a valid PDF file.');
+    }
+  });
+
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files[0]) setFile(fileInput.files[0]);
+  });
+
+  // ── API key show/hide toggle ───────────────────────────────────────────────
+  toggleKeyBtn.addEventListener('click', () => {
+    const isPassword = apiKeyInput.type === 'password';
+    apiKeyInput.type = isPassword ? 'text' : 'password';
+    toggleKeyBtn.textContent = isPassword ? '🙈' : '👁';
+  });
+
+  apiKeyInput.addEventListener('input', updateStartBtn);
+
+  function updateStartBtn() {
+    startBtn.disabled = !(selectedFile && apiKeyInput.value.trim());
+  }
+
+  function setFile(file) {
+    selectedFile = file;
+    fileNameEl.textContent = file.name;
+    dropZone.classList.add('has-file');
+    updateStartBtn();
+    clearError();
+    hideDownload();
+    docxBlob = null;
+  }
+
+  // ── OCR pipeline ───────────────────────────────────────────────────────────
+  startBtn.addEventListener('click', async () => {
+    if (!selectedFile) return;
+    const lang   = document.querySelector('input[name="lang"]:checked').value;
+    const apiKey = apiKeyInput.value.trim();
+    if (!apiKey) { showError('Please enter an Anthropic API key.'); return; }
+
+    startBtn.disabled = true;
+    clearError();
+    hideDownload();
+    showProgress();
+
+    try {
+      // Phase 1: OCR  (0 → 60 %)
+      const pageTexts = await runOCR(selectedFile, lang);
+      // Phase 2: Claude correction  (60 → 95 %)
+      const corrected = await correctPageTexts(pageTexts, lang, apiKey);
+      // Phase 3: build .docx  (95 → 100 %)
+      setStatus('Building .docx…', 95);
+      docxBlob = buildDocx(corrected);
+      setStatus('Done! Click below to download.', 100);
+      showDownload();
+    } catch (err) {
+      showError('Error: ' + (err.message || err));
+      progressSec.style.display = 'none';
+    } finally {
+      startBtn.disabled = false;
+    }
+  });
+
+  async function runOCR(file, lang) {
+    // 1. Load PDF
+    setStatus('Loading PDF…', 0);
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    const totalPages = pdf.numPages;
+
+    // 2. Init Tesseract worker
+    setStatus('Loading OCR engine…', 2);
+    const worker = await Tesseract.createWorker(lang, 1, {
+      logger: () => {}   // silence internal logs
+    });
+
+    // 3. Process each page  (OCR phase: 2 % → 60 %)
+    const pageTexts = [];
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+
+    for (let i = 1; i <= totalPages; i++) {
+      const pct = Math.round(2 + ((i - 1) / totalPages) * 58);
+      setStatus(`Processing page ${i} of ${totalPages}…`, pct);
+
+      // Render page to canvas at 2× scale for better OCR accuracy
+      const page = await pdf.getPage(i);
+      const scale = 2.0;
+      const viewport = page.getViewport({ scale });
+      canvas.width  = viewport.width;
+      canvas.height = viewport.height;
+      await page.render({ canvasContext: ctx, viewport }).promise;
+
+      // OCR the canvas
+      const { data: { text } } = await worker.recognize(canvas);
+      pageTexts.push(text.trim());
+    }
+
+    await worker.terminate();
+    return pageTexts;
+  }
+
+  // ── OCR pre-processing (deterministic fixes before Claude) ─────────────────
+  function preprocessOcrText(text) {
+    return text
+      // 1. Join end-of-line hyphens: "wor-\nden" → "worden"
+      //    Handles regular hyphen, soft hyphen (U+00AD), and en-dash used as hyphen
+      .replace(/[-\u00AD]\r?\n(\S)/g, '$1')
+      // 2. Join lines within a paragraph: a line that doesn't end with sentence
+      //    punctuation and the next non-empty line get joined with a space.
+      //    Blank lines (paragraph separators) are preserved.
+      .replace(/([^\n])(\r?\n)(?!\r?\n)(?=\S)/g, '$1 ')
+      // 3. Collapse runs of spaces (but not newlines)
+      .replace(/[ \t]{2,}/g, ' ')
+      // 4. Remove spaces inserted inside words by the scanner, e.g. "w ord" → "word"
+      //    Only collapse a single space between two lowercase letters where the
+      //    surrounding letters suggest it's mid-word (heuristic: length ≤ 2 on either side)
+      .replace(/\b([a-zA-ZÀ-ÿ]{1,2}) ([a-zA-ZÀ-ÿ]{1,2})\b/g, (m, a, b) => {
+        // Only join if both fragments are implausible standalone words (length 1)
+        if (a.length === 1 && b.length === 1) return a + b;
+        return m; // leave ambiguous cases for Claude
+      });
+  }
+
+  // ── Shared prompt preamble ─────────────────────────────────────────────────
+  const PROMPT_PREAMBLE = `You are an expert OCR post-correction assistant and scholarly editor. The text below was extracted from a scanned book by OCR and has already had obvious line-break hyphens joined. Your job is to restore the text to what the original author wrote, correcting all OCR-introduced errors. Rules:
+
+LINE BREAKS & WORD JOINING:
+- If a word is still split across two lines (with or without a hyphen), join them into one word and remove the line break.
+- Within a paragraph, if a line break does not follow sentence-ending punctuation (. ! ? : …) and the next line starts with a lowercase letter, join the lines with a space.
+- Preserve blank lines — they mark paragraph or section boundaries.
+- Do NOT join lines that start a new sentence, verse line, heading, or numbered item.
+
+SPURIOUS SPACES:
+- Remove spaces inserted inside words by the scanner (e.g. "cor rect" → "correct", "l'au teur" → "l'auteur").
+- Remove spaces before punctuation (e.g. "word ," → "word,").
+
+WORD-LEVEL OCR ERRORS & SPELLING:
+- Fix words that were garbled by OCR into non-words or wrong words. Use surrounding context and your knowledge of the language to identify and correct them (e.g. Latin "no" → "non", "qnod" → "quod", "bomo" → "homo"; German "dcr" → "der", "uud" → "und"; French "qne" → "que", "tont" → "tout").
+- Correct genuine spelling errors introduced by OCR (not archaic spellings — preserve those).
+- MERGED WORDS: When OCR has run two words together into one token that is not a valid word, split them with a space. Use your knowledge of the language's vocabulary and grammar to detect this (e.g. Latin "uteam" → "ut eam", "nequid" → "ne quid", "adme" → "ad me", "cumeo" → "cum eo"; German "indem" may be one word but "zurHand" → "zur Hand"; French "quele" → "que le"). Be especially alert to common short words (prepositions, conjunctions, pronouns, articles) that got fused to an adjacent word.
+- MISSING LETTERS: When OCR dropped one or more letters from a word, leaving a truncated or unrecognisable form, restore the missing letters — but only when the correct word is unambiguous from context and language knowledge. For Latin, apply the u/v distinction first, then check whether the resulting form is still incomplete (e.g. "voniam" → first u/v → "uoniam" → then missing letter → "quoniam"). Examples: Latin "uoniam"→"quoniam", "voniam"→"quoniam", "orro"→"porro", "raeter"→"praeter", "ropter"→"propter", "ossunt"→"possunt", "alet"→"valet", "oluit"→"voluit"; German "icht"→"nicht", "aben"→"haben", "ird"→"wird"; French "ue"→"que", "ar"→"par", "our"→"pour". Do not guess if the correct word is uncertain — leave the token as-is in that case.
+- Correct wrong inflectional endings when OCR clearly misread the final letters and the grammar of the sentence makes the correct form evident (e.g. Latin case endings, German adjective endings, verb forms).
+- Do not "correct" archaisms, variant spellings, or unusual forms that may be intentional in the original.
+
+CHARACTER ERRORS:
+`;
+
+  const PROMPT_SUFFIX = `
+Do not paraphrase, translate, or add any content not present in the original. Do not explain your changes.
+Return only the corrected text.`;
+
+  // ── Language-specific system prompts ───────────────────────────────────────
+  const SYSTEM_PROMPTS = {
+    lat: PROMPT_PREAMBLE + `Apply Latin corrections in this order:
+STEP 1 — u/v distinction: enforce the classical convention throughout — 'v' when the letter is consonantal (immediately before a vowel: "vir", "vita", "volo", "novus"), 'u' when vocalic everywhere else ("una", "unus", "sub", "cum", "ut"). Fix: "vt"→"ut", "vbi"→"ubi", "vna"→"una", "vnde"→"unde", "vnum"→"unum", "viuit"→"vivit", "nouus"→"novus". Capital V at the start of a word before a vowel stays V; before a consonant use U.
+STEP 2 — Missing letters: after applying u/v, check if the token is still not a valid Latin word and restore the missing letters only when the answer is unambiguous. E.g. "voniam" → (u/v) → "uoniam" → (missing q) → "quoniam"; "orro"→"porro", "raeter"→"praeter", "ropter"→"propter", "ossunt"→"possunt", "oluit"→"voluit". Do not guess if uncertain.
+STEP 3 — Other character fixes: rn→m, cl→d, li→h, I→l mid-word, 0→o, 1→l, c↔e in minuscule. Restore fi fl ffi ffl ligatures split into two characters. Fix ae/oe: restore "ae", "oe" where wrongly split or collapsed; restore æ/œ if the source uses them. Restore macrons: ā ē ī ō ū using context and prosody.
+STEP 4 — Word-level OCR errors: "no"→"non", "qnod"→"quod", "qnoque"→"quoque", "bomo"→"homo", "bac"→"hac", "boc"→"hoc", "nt"→"ut", "qni"→"qui", "qnae"→"quae", "nbi"→"ubi", "esfc"→"est", "snnt"→"sunt", "snm"→"sum", "omuis"→"omnis", "igitnr"→"igitur", "antcm"→"autem". Use context to decide.` + PROMPT_SUFFIX,
+
+    grc: PROMPT_PREAMBLE + `- Restore all polytonic diacritics: acute ´, grave \`, circumflex ῀, smooth breathing ᾿, rough breathing ῾, iota subscript ͅ, diaeresis ¨, and all combinations (e.g. ἄ ἃ ᾄ ῥ).
+- Correct sigma: σ in mid-word, ς at end of word.
+- Fix Latin/ASCII substitutions: n→η, v→ν, p→ρ, w→ω, u→υ, o→ο, B→β, H→η, A→α, K→κ, etc.
+- Restore iota subscript under ᾳ ῃ ῳ where missing.
+- Fix wrongly split digraphs: restore αι αυ ευ ου etc. where OCR inserted a space.
+- Correct breathing + accent combinations that OCR placed on the wrong letter or omitted.
+- Fix word-level garbling: use your knowledge of classical/Hellenistic Greek grammar and common vocabulary to restore words that OCR mangled beyond single-character fixes.` + PROMPT_SUFFIX,
+
+    deu: PROMPT_PREAMBLE + `- Restore umlauts: ä ö ü Ä Ö Ü. OCR often renders ä as "a" or "ä", ö as "o" or "6", ü as "u" or "ii".
+- Restore ß where misread as "ss", "B", "8", or "fi".
+- Fix compound-word over-hyphenation: German compounds split by OCR across lines should be rejoined (Haupt-\nstadt → Hauptstadt).
+- Correct rn→m, cl→d, li→h, 0→o, 1→l, ie→le or 1e misreads.
+- Restore correct quotation marks: „…" (German style).
+- Common German word-level OCR errors: "dcr"→"der", "dic"→"die", "das"→"das", "uud"→"und", "iu"→"in", "iut"→"ist", "eiue"→"eine", "auch"→"auch", "uicht"→"nicht", "mit"→"mit", "siud"→"sind". Use context — German grammar (case, number, gender) to pick the right form.` + PROMPT_SUFFIX,
+
+    fra: PROMPT_PREAMBLE + `- Restore accents: é è ê ë à â ä ù û ü î ï ô œ æ and capitals É È Ê etc.
+- Restore cedilla: ç Ç. OCR often renders ç as "c," or "c".
+- Restore guillemets: « » — not << >> or " ".
+- Fix elision apostrophes: l'auteur, c'est, d'un, j'ai, qu'il — OCR often drops or replaces the apostrophe with a backtick or space.
+- Correct rn→m, cl→d, 0→o, 1→l, i→l misreads.
+- Fix "œ" split into "oe" or rendered as "ce".
+- Common French word-level OCR errors: "qne"→"que", "tont"→"tout", "nne"→"une", "dn"→"du", "nn"→"un", "tne"→"une", "eu"→"en", "lcs"→"les", "cst"→"est", "sons"→"sous" or "sont". Use grammatical context to decide.` + PROMPT_SUFFIX,
+
+    ita: PROMPT_PREAMBLE + `- Restore accents: à è é ì ò ó ù and their capitals. OCR often drops them or replaces with plain vowels.
+- Fix elision apostrophes: dell', l', c'è, un', po' — OCR often drops or replaces with a backtick or space.
+- Correct rn→m, cl→d, 0→o, 1→l misreads.
+- Restore double letters that OCR collapsed: ll, nn, tt, ss, cc, etc.
+- Fix "ch" rendered as "eh" or "cb".
+- Common Italian word-level OCR errors: "uon"→"non", "cbe"→"che", "dcl"→"del", "uella"→"nella", "cou"→"con", "pcr"→"per", "uuo"→"uno", "sou"→"son" or "sono", "uo"→"no" or "un". Use context and Italian grammar to decide.` + PROMPT_SUFFIX,
+  };
+
+  // ── Claude API correction ──────────────────────────────────────────────────
+  async function correctPageTexts(pageTexts, lang, apiKey) {
+    const systemPrompt = SYSTEM_PROMPTS[lang] || SYSTEM_PROMPTS['lat'];
+    const totalPages   = pageTexts.length;
+    const corrected    = [];
+
+    for (let i = 0; i < totalPages; i++) {
+      const pct = Math.round(60 + (i / totalPages) * 35);
+      setStatus(`Correcting page ${i + 1} of ${totalPages} with Claude…`, pct);
+
+      try {
+        const response = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01',
+            'content-type': 'application/json',
+            'anthropic-dangerous-direct-browser-access': 'true',
+          },
+          body: JSON.stringify({
+            model: 'claude-haiku-4-5-20251001',
+            max_tokens: 4096,
+            system: systemPrompt,
+            messages: [{ role: 'user', content: preprocessOcrText(pageTexts[i]) }],
+          }),
+        });
+
+        if (!response.ok) {
+          const errText = await response.text().catch(() => response.statusText);
+          throw new Error(`API error ${response.status}: ${errText}`);
+        }
+
+        const data = await response.json();
+        const text = data.content && data.content[0] && data.content[0].text;
+        corrected.push(text ? text.trim() : pageTexts[i]);
+      } catch (err) {
+        console.warn(`Claude correction failed for page ${i + 1}, using raw OCR text.`, err);
+        corrected.push(pageTexts[i]);
+      }
+    }
+
+    return corrected;
+  }
+
+  // ── .docx builder ──────────────────────────────────────────────────────────
+  function escapeXml(str) {
+    return str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;');
+  }
+
+  function buildDocx(pageTexts) {
+    // Build word/document.xml body
+    let bodyXml = '';
+
+    pageTexts.forEach((pageText, index) => {
+      const lines = pageText.split('\n');
+
+      lines.forEach(line => {
+        const safe = escapeXml(line);
+        bodyXml += `<w:p><w:r><w:t xml:space="preserve">${safe}</w:t></w:r></w:p>\n`;
+      });
+
+      // Page break between pages (not after last page)
+      if (index < pageTexts.length - 1) {
+        bodyXml += `<w:p><w:r><w:br w:type="page"/></w:r></w:p>\n`;
+      }
+    });
+
+    const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document
+  xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:o="urn:schemas-microsoft-com:office:office"
+  xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+  xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"
+  xmlns:v="urn:schemas-microsoft-com:vml"
+  xmlns:wp14="http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing"
+  xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+  xmlns:w10="urn:schemas-microsoft-com:office:word"
+  xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+  xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"
+  xmlns:wpg="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup"
+  xmlns:wpi="http://schemas.microsoft.com/office/word/2010/wordprocessingInk"
+  xmlns:wne="http://schemas.microsoft.com/office/word/2006/wordml"
+  xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
+  mc:Ignorable="w14 wp14">
+  <w:body>
+${bodyXml}  </w:body>
+</w:document>`;
+
+    const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml"
+    ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>`;
+
+    const relsMain = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1"
+    Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"
+    Target="word/document.xml"/>
+</Relationships>`;
+
+    const relsDocument = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+</Relationships>`;
+
+    const zip = new JSZip();
+    zip.file('[Content_Types].xml', contentTypes);
+    zip.file('_rels/.rels', relsMain);
+    zip.file('word/document.xml', documentXml);
+    zip.file('word/_rels/document.xml.rels', relsDocument);
+
+    return zip.generateAsync({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+  }
+
+  // ── Download ───────────────────────────────────────────────────────────────
+  downloadBtn.addEventListener('click', async () => {
+    if (!docxBlob) return;
+    const blob = await docxBlob;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const baseName = selectedFile ? selectedFile.name.replace(/\.pdf$/i, '') : 'ocr-output';
+    a.href = url;
+    a.download = baseName + '.docx';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  });
+
+  restartBtn.addEventListener('click', () => {
+    selectedFile = null;
+    docxBlob = null;
+    fileNameEl.textContent = '';
+    dropZone.classList.remove('has-file');
+    fileInput.value = '';
+    progressSec.style.display = 'none';
+    progressBar.style.width = '0%';
+    statusText.textContent = 'Initializing…';
+    hideDownload();
+    clearError();
+    updateStartBtn();
+    // API key is intentionally preserved
+  });
+
+  // ── UI helpers ─────────────────────────────────────────────────────────────
+  function setStatus(msg, pct) {
+    statusText.textContent = msg;
+    progressBar.style.width = pct + '%';
+  }
+
+  function showProgress() {
+    progressSec.style.display = 'block';
+    setStatus('Starting…', 0);
+  }
+
+  function showDownload() {
+    downloadSec.style.display = 'block';
+  }
+
+  function hideDownload() {
+    downloadSec.style.display = 'none';
+  }
+
+  function showError(msg) {
+    errorBox.textContent = msg;
+    errorBox.style.display = 'block';
+  }
+
+  function clearError() {
+    errorBox.textContent = '';
+    errorBox.style.display = 'none';
+  }
+
+})();
+</script>
+</body>
+</html>

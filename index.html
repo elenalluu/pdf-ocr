@@ -310,6 +310,20 @@
     <label for="lang-ita" class="lang-label">Italian</label>
   </div>
 
+  <!-- OCR Mode -->
+  <div class="section-label">OCR Mode</div>
+  <div class="lang-grid">
+    <input type="radio" name="ocr-mode" id="mode-auto" class="lang-option" value="auto" checked>
+    <label for="mode-auto" class="lang-label">Auto</label>
+
+    <input type="radio" name="ocr-mode" id="mode-tesseract" class="lang-option" value="tesseract">
+    <label for="mode-tesseract" class="lang-label">Tesseract</label>
+
+    <input type="radio" name="ocr-mode" id="mode-claude" class="lang-option" value="claude">
+    <label for="mode-claude" class="lang-label">Claude OCR</label>
+  </div>
+  <p class="drop-hint" style="margin-top:-16px;margin-bottom:20px;">Auto: use existing text layer if present, otherwise Tesseract + Claude correction.&nbsp; Claude OCR: vision pass, best for historical prints.</p>
+
   <!-- API Key -->
   <div class="section-label">API Key</div>
   <div class="api-key-wrap">
@@ -427,8 +441,9 @@
   // ── OCR pipeline ───────────────────────────────────────────────────────────
   startBtn.addEventListener('click', async () => {
     if (!selectedFile) return;
-    const lang   = document.querySelector('input[name="lang"]:checked').value;
-    const apiKey = apiKeyInput.value.trim();
+    const lang    = document.querySelector('input[name="lang"]:checked').value;
+    const ocrMode = document.querySelector('input[name="ocr-mode"]:checked').value;
+    const apiKey  = apiKeyInput.value.trim();
     if (!apiKey) { showError('Please enter an Anthropic API key.'); return; }
 
     startBtn.disabled = true;
@@ -437,11 +452,20 @@
     showProgress();
 
     try {
-      // Phase 1: OCR  (0 → 60 %)
-      const pageTexts = await runOCR(selectedFile, lang);
-      // Phase 2: Claude correction  (60 → 95 %)
-      const corrected = await correctPageTexts(pageTexts, lang, apiKey);
-      // Phase 3: build .docx  (95 → 100 %)
+      let corrected;
+      if (ocrMode === 'claude') {
+        // Claude vision: OCR + correction in one pass  (0 → 95 %)
+        setStatus('Loading PDF…', 0);
+        const arrayBuffer = await selectedFile.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        corrected = await ocrWithClaude(pdf, pdf.numPages, lang, apiKey);
+      } else {
+        // Auto or Tesseract  (0 → 60 %)
+        const pageTexts = await runOCR(selectedFile, lang, ocrMode);
+        // Claude correction  (60 → 95 %)
+        corrected = await correctPageTexts(pageTexts, lang, apiKey);
+      }
+      // Build .docx  (95 → 100 %)
       setStatus('Building .docx…', 95);
       docxBlob = buildDocx(corrected);
       setStatus('Done! Click below to download.', 100);
@@ -454,20 +478,31 @@
     }
   });
 
-  async function runOCR(file, lang) {
+  async function runOCR(file, lang, ocrMode) {
     // 1. Load PDF
     setStatus('Loading PDF…', 0);
     const arrayBuffer = await file.arrayBuffer();
     const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
     const totalPages = pdf.numPages;
 
-    // 2. Init Tesseract worker
+    // 2. Auto mode: try text layer first
+    if (ocrMode === 'auto') {
+      setStatus('Checking for text layer…', 1);
+      const layerTexts = await extractTextLayer(pdf, totalPages);
+      if (layerTexts) {
+        setStatus('Text layer found — skipping OCR…', 60);
+        return layerTexts;
+      }
+      setStatus('No text layer — switching to Tesseract…', 2);
+    }
+
+    // 3. Init Tesseract worker
     setStatus('Loading OCR engine…', 2);
     const worker = await Tesseract.createWorker(lang, 1, {
       logger: () => {}   // silence internal logs
     });
 
-    // 3. Process each page  (OCR phase: 2 % → 60 %)
+    // 4. Process each page  (OCR phase: 2 % → 60 %)
     const pageTexts = [];
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
@@ -476,7 +511,6 @@
       const pct = Math.round(2 + ((i - 1) / totalPages) * 58);
       setStatus(`Processing page ${i} of ${totalPages}…`, pct);
 
-      // Render page to canvas at 2× scale for better OCR accuracy
       const page = await pdf.getPage(i);
       const scale = 2.0;
       const viewport = page.getViewport({ scale });
@@ -484,12 +518,106 @@
       canvas.height = viewport.height;
       await page.render({ canvasContext: ctx, viewport }).promise;
 
-      // OCR the canvas
       const { data: { text } } = await worker.recognize(canvas);
       pageTexts.push(text.trim());
     }
 
     await worker.terminate();
+    return pageTexts;
+  }
+
+  // ── Text layer extraction (born-digital PDFs) ──────────────────────────────
+  async function extractTextLayer(pdf, totalPages) {
+    const pageTexts = [];
+    let totalNonWhitespace = 0;
+
+    for (let i = 1; i <= totalPages; i++) {
+      const page = await pdf.getPage(i);
+      const textContent = await page.getTextContent();
+
+      let pageText = '';
+      let lastY = null;
+      let lastX = null;
+
+      for (const item of textContent.items) {
+        if (!('str' in item)) continue;
+        if (lastY === null) {
+          pageText += item.str;
+        } else if (Math.abs(item.transform[5] - lastY) > 2) {
+          pageText += '\n' + item.str;
+        } else {
+          const needsSpace = lastX !== null && item.transform[4] > lastX &&
+            !pageText.endsWith(' ') && !item.str.startsWith(' ');
+          pageText += (needsSpace ? ' ' : '') + item.str;
+        }
+        lastY = item.transform[5];
+        lastX = item.transform[4] + (item.width || 0);
+      }
+
+      pageTexts.push(pageText);
+      totalNonWhitespace += (pageText.match(/\S/g) || []).length;
+    }
+
+    // If average non-whitespace chars per page is below threshold, treat as scanned
+    const avgNonWS = totalNonWhitespace / totalPages;
+    if (avgNonWS < 100) return null;
+
+    return pageTexts;
+  }
+
+  // ── Claude Vision OCR (OCR + correction in one pass) ──────────────────────
+  async function ocrWithClaude(pdf, totalPages, lang, apiKey) {
+    const systemPrompt = SYSTEM_PROMPTS[lang] || SYSTEM_PROMPTS['lat'];
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const pageTexts = [];
+
+    for (let i = 1; i <= totalPages; i++) {
+      const pct = Math.round(2 + ((i - 1) / totalPages) * 93);
+      setStatus(`Claude OCR page ${i} of ${totalPages}…`, pct);
+
+      const page = await pdf.getPage(i);
+      const viewport = page.getViewport({ scale: 1 });
+      const scale = Math.min(2.0, 4096 / Math.max(viewport.width, viewport.height));
+      const scaledViewport = page.getViewport({ scale });
+
+      canvas.width  = scaledViewport.width;
+      canvas.height = scaledViewport.height;
+      await page.render({ canvasContext: ctx, viewport: scaledViewport }).promise;
+
+      const base64 = canvas.toDataURL('image/png').replace(/^data:image\/png;base64,/, '');
+
+      const resp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 4096,
+          system: systemPrompt,
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'image', source: { type: 'base64', media_type: 'image/png', data: base64 } },
+              { type: 'text', text: 'Transcribe every word of text visible on this page, then apply all correction steps from your instructions. Return only the corrected transcription.' },
+            ],
+          }],
+        }),
+      });
+
+      if (!resp.ok) {
+        const errBody = await resp.text().catch(() => '');
+        throw new Error(`Claude OCR error page ${i}: HTTP ${resp.status} — ${errBody}`);
+      }
+
+      const json = await resp.json();
+      pageTexts.push(json?.content?.[0]?.text || '');
+    }
+
     return pageTexts;
   }
 
@@ -549,7 +677,40 @@ Return only the corrected text.`;
 STEP 1 — u/v distinction: enforce the classical convention throughout — 'v' when the letter is consonantal (immediately before a vowel: "vir", "vita", "volo", "novus"), 'u' when vocalic everywhere else ("una", "unus", "sub", "cum", "ut"). Fix: "vt"→"ut", "vbi"→"ubi", "vna"→"una", "vnde"→"unde", "vnum"→"unum", "viuit"→"vivit", "nouus"→"novus". Capital V at the start of a word before a vowel stays V; before a consonant use U.
 STEP 2 — Missing letters: after applying u/v, check if the token is still not a valid Latin word and restore the missing letters only when the answer is unambiguous. E.g. "voniam" → (u/v) → "uoniam" → (missing q) → "quoniam"; "orro"→"porro", "raeter"→"praeter", "ropter"→"propter", "ossunt"→"possunt", "oluit"→"voluit". Do not guess if uncertain.
 STEP 3 — Other character fixes: rn→m, cl→d, li→h, I→l mid-word, 0→o, 1→l, c↔e in minuscule. Restore fi fl ffi ffl ligatures split into two characters. Fix ae/oe: restore "ae", "oe" where wrongly split or collapsed; restore æ/œ if the source uses them. Restore macrons: ā ē ī ō ū using context and prosody.
-STEP 4 — Word-level OCR errors: "no"→"non", "qnod"→"quod", "qnoque"→"quoque", "bomo"→"homo", "bac"→"hac", "boc"→"hoc", "nt"→"ut", "qni"→"qui", "qnae"→"quae", "nbi"→"ubi", "esfc"→"est", "snnt"→"sunt", "snm"→"sum", "omuis"→"omnis", "igitnr"→"igitur", "antcm"→"autem". Use context to decide.` + PROMPT_SUFFIX,
+STEP 4 — Word-level OCR errors: "no"→"non", "qnod"→"quod", "qnoque"→"quoque", "bomo"→"homo", "bac"→"hac", "boc"→"hoc", "nt"→"ut", "qni"→"qui", "qnae"→"quae", "nbi"→"ubi", "esfc"→"est", "snnt"→"sunt", "snm"→"sum", "omuis"→"omnis", "igitnr"→"igitur", "antcm"→"autem". Use context to decide.
+STEP 5 — MERGED WORD CLUMPS (neo-Latin printing): Sometimes OCR produces a long run of characters with no spaces that cannot be a single Latin word — typically caused by a full phrase being printed in ligature-heavy type or by OCR losing inter-word spaces entirely.
+Procedure:
+  a. If a token is longer than ~12 characters and cannot be parsed as a single valid Latin word form, treat it as a sequence of merged words.
+  b. Use your knowledge of Latin vocabulary and the surrounding sentence to identify the word boundaries and insert spaces. Work left-to-right, greedily matching the longest valid Latin word at each position.
+  c. After splitting, apply all previous steps (u/v, missing letters, character fixes) to each resulting fragment.
+  d. Examples:
+     "Sedanimantes"      → "Sed animantes"
+     "aquauitam"         → "aqua vitam"       (u/v: aqua + vitam)
+     "spiritudncere"     → "spiritu ducere"
+     "necessariam"       → "necessariam"      (valid single word — do NOT split)
+     "spirituducereneceſſarium" → "spiritu ducere necessarium"
+  e. Do NOT split valid compound words or long but attested Latin words (e.g. "praetermittendum", "contemplationi", "constitutionem").
+  f. Right-anchored fallback — for corrupted first fragment:
+     If left-to-right matching fails (no valid Latin word starts at position 0), try
+     right-anchoring instead:
+       1. Scan through the token looking for the leftmost position where a clearly
+          recognizable Latin word begins (after applying u/v if needed).
+       2. Everything to the left of that word is a separate fragment — the first word,
+          whose beginning letters were corrupted or dropped by OCR.
+       3. Apply STEP 2 (missing-letter restoration) to that left fragment to recover it.
+       4. Then apply all previous steps to both fragments.
+     Examples:
+       "deturinuenisse"  → right word: "inuenisse" (= "invenisse")
+                         → left fragment: "detur" (valid as-is)
+                         → result: "detur invenisse"
+       "etruinuenisse"   → right word: "inuenisse" (= "invenisse")
+                         → left fragment: "etru" → STEP 2 restores missing 'd' → "detur"
+                         → result: "detur invenisse"
+       "possiinuenisse"  → right word: "inuenisse"
+                         → left fragment: "possi" → STEP 2 → "possit" (dropped 't')
+                         → result: "possit invenisse"
+     Do NOT apply this fallback if the prefix is so short or garbled that restoration
+     would be a guess — leave the token unchanged in that case.` + PROMPT_SUFFIX,
 
     grc: PROMPT_PREAMBLE + `- Restore all polytonic diacritics: acute ´, grave \`, circumflex ῀, smooth breathing ᾿, rough breathing ῾, iota subscript ͅ, diaeresis ¨, and all combinations (e.g. ἄ ἃ ᾄ ῥ).
 - Correct sigma: σ in mid-word, ς at end of word.
